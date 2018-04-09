@@ -177,61 +177,72 @@ git.findGitDir = (repoPath) => {
   return gitDir;
 }
 
-git.status = (repoPath, file) => {
-  const gitDir = git.findGitDir(repoPath)
-  return Bluebird.props({
-    numStatsStaged: git(['diff', '--no-renames', '--numstat', '--cached', '--', (file || '')], repoPath)
-      .then(gitParser.parseGitStatusNumstat),
-    numStatsUnstaged: git(['diff', '--no-renames', '--numstat', '--', (file || '')], repoPath)
-      .then(gitParser.parseGitStatusNumstat),
-    status: git(['status', '-s', '-b', '-u', (file || '')], repoPath)
-      .then(gitParser.parseGitStatus)
-      .then((status) => {
-        return Bluebird.props({
-          isRebaseMerge: fs.isExists(path.join(gitDir, 'rebase-merge')),
-          isRebaseApply: fs.isExists(path.join(gitDir, 'rebase-apply')),
-          isMerge: fs.isExists(path.join(gitDir, 'MERGE_HEAD')),
-          inCherry: fs.isExists(path.join(gitDir, 'CHERRY_PICK_HEAD'))
-        }).then((result) => {
-          status.inRebase = result.isRebaseMerge || result.isRebaseApply;
-          status.inMerge = result.isMerge;
-          status.inCherry = result.inCherry;
-        }).then(() => {
-          if (status.inMerge || status.inCherry) {
-            return fs.readFileAsync(path.join(gitDir, 'MERGE_MSG'), { encoding: 'utf8' })
-              .then((commitMessage) => {
-                status.commitMessage = commitMessage;
-                return status;
-              }).catch(err => {
-                // 'MERGE_MSG' file is gone away, which means we are no longer in merge state
-                // and state changed while this call is being made.
-                status.inMerge = status.inCherry = false;
-                return status;
-              });
-          }
-          return status;
-        });
-      })
-  }).then((result) => {
-    const numstats = [result.numStatsStaged, result.numStatsUnstaged].reduce(_.extend, {});
-    const status = result.status;
-    status.inConflict = false;
-
-    // merge numstats
-    Object.keys(status.files).forEach((filename) => {
-      // git diff returns paths relative to git repo but git status does not
-      const absoluteFilename = filename.replace(/\.\.\//g, '');
-      const stats = numstats[absoluteFilename] || { additions: '-', deletions: '-' };
-      const fileObj = status.files[filename];
-      fileObj.additions = stats.additions;
-      fileObj.deletions = stats.deletions;
-      if (!status.inConflict && fileObj.conflict) {
-        status.inConflict = true;
-      }
-    });
-
-    return status;
+//FIXME not working
+git.findGitDirPromise = (repoPath) => {
+  return git(['rev-parse', '--absolute-git-dir'], repoPath).then((text) => {
+    const gitDir = text.toString().trim();
+    return gitDir;
   });
+}
+
+git.status = (repoPath, file) => {
+  const gitDir = git.findGitDir(repoPath);
+  return
+  //git.findGitDirPromise(repoPath).then((gitDir) => {
+    Bluebird.props({
+      numStatsStaged: git(['diff', '--no-renames', '--numstat', '--cached', '--', (file || '')], repoPath)
+        .then(gitParser.parseGitStatusNumstat),
+      numStatsUnstaged: git(['diff', '--no-renames', '--numstat', '--', (file || '')], repoPath)
+        .then(gitParser.parseGitStatusNumstat),
+      status: git(['status', '-s', '-b', '-u', (file || '')], repoPath)
+        .then(gitParser.parseGitStatus)
+        .then((status) => {
+          return Bluebird.props({
+            isRebaseMerge: fs.isExists(path.join(gitDir, 'rebase-merge')),
+            isRebaseApply: fs.isExists(path.join(gitDir, 'rebase-apply')),
+            isMerge: fs.isExists(path.join(gitDir, 'MERGE_HEAD')),
+            inCherry: fs.isExists(path.join(gitDir, 'CHERRY_PICK_HEAD'))
+          }).then((result) => {
+            status.inRebase = result.isRebaseMerge || result.isRebaseApply;
+            status.inMerge = result.isMerge;
+            status.inCherry = result.inCherry;
+          }).then(() => {
+            if (status.inMerge || status.inCherry) {
+              return fs.readFileAsync(path.join(gitDir, 'MERGE_MSG'), { encoding: 'utf8' })
+                .then((commitMessage) => {
+                  status.commitMessage = commitMessage;
+                  return status;
+                }).catch(err => {
+                  // 'MERGE_MSG' file is gone away, which means we are no longer in merge state
+                  // and state changed while this call is being made.
+                  status.inMerge = status.inCherry = false;
+                  return status;
+                });
+            }
+            return status;
+          });
+        })
+    }).then((result) => {
+      const numstats = [result.numStatsStaged, result.numStatsUnstaged].reduce(_.extend, {});
+      const status = result.status;
+      status.inConflict = false;
+
+      // merge numstats
+      Object.keys(status.files).forEach((filename) => {
+        // git diff returns paths relative to git repo but git status does not
+        const absoluteFilename = filename.replace(/\.\.\//g, '');
+        const stats = numstats[absoluteFilename] || { additions: '-', deletions: '-' };
+        const fileObj = status.files[filename];
+        fileObj.additions = stats.additions;
+        fileObj.deletions = stats.deletions;
+        if (!status.inConflict && fileObj.conflict) {
+          status.inConflict = true;
+        }
+      });
+
+      return status;
+    });
+  //}); // Bluebird.props
 }
 
 git.getRemoteAddress = (repoPath, remoteName) => {
